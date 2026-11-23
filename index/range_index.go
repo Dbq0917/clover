@@ -138,7 +138,15 @@ func (idx *rangeIndex) IterateRange(vRange *Range, reverse bool, onValue func(do
 
 	seekPrefix := startKey
 	if reverse {
-		seekPrefix = endKey
+		if endKey != nil {
+			// The cursor is reversed, so Seek must target the upper bound.
+			// Index keys are "<encoded value><docId>", therefore appending
+			// 0xff to the value prefix makes the seek land on the last key
+			// belonging to the range end value group, on both backends.
+			seekPrefix = append(append([]byte(nil), endKey...), 0xff)
+		} else {
+			seekPrefix = endKey
+		}
 	}
 
 	if seekPrefix == nil {
@@ -157,27 +165,29 @@ func (idx *rangeIndex) IterateRange(vRange *Range, reverse bool, onValue func(do
 	cursor.Seek(seekPrefix)
 
 	if !reverse {
-		if vRange.Start != nil && !vRange.StartIncluded { // skip all values equals to range.start
+		if vRange.Start != nil && !vRange.StartIncluded { // skip all values equal to range.start
 			for ; cursor.Valid(); cursor.Next() {
 				item, err := cursor.Item()
 				if err != nil {
 					return err
 				}
 
-				if !bytes.HasPrefix(item.Key, startKey) {
+				p, _ := extractDocId(item.Key)
+				if !bytes.Equal(p, startKey) {
 					break
 				}
 			}
 		}
 	} else {
-		if vRange.End != nil && !vRange.EndIncluded { // skip all values equals to range.end
+		if vRange.End != nil && !vRange.EndIncluded { // skip all values equal to range.end
 			for ; cursor.Valid(); cursor.Next() {
 				item, err := cursor.Item()
 				if err != nil {
 					return err
 				}
 
-				if !bytes.HasPrefix(item.Key, endKey) {
+				p, _ := extractDocId(item.Key)
+				if !bytes.Equal(p, endKey) {
 					break
 				}
 			}
@@ -200,12 +210,12 @@ func (idx *rangeIndex) IterateRange(vRange *Range, reverse bool, onValue func(do
 
 		if !reverse {
 			endCmp := bytes.Compare(p, endKey)
-			if (vRange.End != nil || vRange.IsNil()) && (endCmp > 0 || (endCmp == 0 && !vRange.EndIncluded)) {
+			if vRange.End != nil && (endCmp > 0 || (endCmp == 0 && !vRange.EndIncluded)) {
 				break
 			}
 		} else {
 			startCmp := bytes.Compare(p, startKey)
-			if (vRange.Start != nil || vRange.IsNil()) && (startCmp < 0 || (startCmp == 0 && !vRange.StartIncluded)) {
+			if vRange.Start != nil && (startCmp < 0 || (startCmp == 0 && !vRange.StartIncluded)) {
 				break
 			}
 		}

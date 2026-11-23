@@ -115,24 +115,29 @@ type boltCursor struct {
 
 func (c *boltCursor) Seek(seek []byte) error {
 	key, value := c.Cursor.Seek(seek)
-	if key != nil && value != nil {
-		c.currItem = &store.Item{
-			Key:   key,
-			Value: value,
+	if !c.forward {
+		// bbolt's Seek always returns the first key >= seek, while a reverse
+		// badger iterator positions on the last key <= seek. When seek does
+		// not match an existing key, step back once; when no key >= seek
+		// exists, land on the last key instead.
+		if key == nil {
+			key, value = c.Cursor.Last()
+		} else if !bytes.Equal(key, seek) {
+			key, value = c.Cursor.Prev()
 		}
 	}
-
-	c.adjustSeek(key, seek)
+	c.setCurrent(key, value)
 	return nil
 }
 
-func (c *boltCursor) adjustSeek(key []byte, seek []byte) {
-	if key != nil && !bytes.Equal(key, seek) && !c.forward {
-		key, value := c.Cursor.Prev()
+func (c *boltCursor) setCurrent(key, value []byte) {
+	if key != nil {
 		c.currItem = &store.Item{
 			Key:   key,
 			Value: value,
 		}
+	} else {
+		c.currItem = nil
 	}
 }
 

@@ -1494,6 +1494,50 @@ func TestIndexQueryWithSort(t *testing.T) {
 	})
 }
 
+func TestIndexOpenRangeWithReverseSort(t *testing.T) {
+	runCloverTest(t, func(t *testing.T, db *c.DB) {
+		require.NoError(t, db.CreateCollection("test"))
+		require.NoError(t, db.CreateIndex("test", "v"))
+
+		// Boundary values are duplicated on purpose: several index keys share
+		// the same encoded value prefix, which is what the reverse Seek has to
+		// land on correctly.
+		values := []int{1, 2, 2, 3, 4, 4, 5}
+		for i, v := range values {
+			doc := d.NewDocument()
+			doc.Set("v", v)
+			doc.Set("seq", i)
+			require.NoError(t, db.Insert("test", doc))
+		}
+
+		assertIndexed := func(criteria q.Criteria, want []int) {
+			query := q.NewQuery("test").Where(criteria).Sort(q.SortOption{Field: "v", Direction: -1})
+
+			docs, err := db.FindAll(query)
+			require.NoError(t, err)
+
+			got := make([]int, 0, len(docs))
+			for _, doc := range docs {
+				got = append(got, int(doc.Get("v").(int64)))
+			}
+			require.Equal(t, want, got)
+		}
+
+		// GtEq with an open upper bound: reverse index scan used to return no
+		// documents on bbolt because the reverse Seek overshot every key.
+		assertIndexed(q.Field("v").GtEq(2), []int{5, 4, 4, 3, 2, 2})
+		assertIndexed(q.Field("v").Gt(2), []int{5, 4, 4, 3})
+
+		// Inclusive lower end of the reverse scan must keep the boundary group.
+		assertIndexed(q.Field("v").LtEq(4), []int{4, 4, 3, 2, 2, 1})
+		assertIndexed(q.Field("v").Lt(4), []int{3, 2, 2, 1})
+
+		// Bounded ranges, including both ends inclusive.
+		bounded := q.Field("v").GtEq(2).And(q.Field("v").LtEq(4))
+		assertIndexed(bounded, []int{4, 4, 3, 2, 2})
+	})
+}
+
 func TestPagedQueryUsingIndex(t *testing.T) {
 	runCloverTest(t, func(t *testing.T, db *c.DB) {
 		err := db.CreateCollection("test")
