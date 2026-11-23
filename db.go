@@ -143,11 +143,20 @@ func NewObjectId() string {
 }
 
 // Insert adds the supplied documents to a collection.
+// The insert is atomic: either all the documents are added to the collection, or none of them is.
 func (db *DB) Insert(collectionName string, docs ...*d.Document) error {
 	for _, doc := range docs {
 		if !doc.Has(d.ObjectIdField) || doc.Get(d.ObjectIdField) == "" {
 			objectId := NewObjectId()
 			doc.Set(d.ObjectIdField, objectId)
+		}
+	}
+
+	// Validate the whole batch up-front, so that a single invalid document
+	// rejects the entire batch before anything is written to the store.
+	for _, doc := range docs {
+		if err := d.Validate(doc); err != nil {
+			return err
 		}
 	}
 

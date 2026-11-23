@@ -263,6 +263,49 @@ func TestInsertAndGet(t *testing.T) {
 	})
 }
 
+func TestInsertAtomic(t *testing.T) {
+	runCloverTest(t, func(t *testing.T, db *c.DB) {
+		err := db.CreateCollection("myCollection")
+		require.NoError(t, err)
+
+		nInserts := 1000
+		docs := make([]*d.Document, 0, nInserts)
+		for i := 0; i < nInserts; i++ {
+			doc := d.NewDocument()
+			doc.Set("myField", i)
+			docs = append(docs, doc)
+		}
+
+		// put a document with a field of the wrong type in the middle of the batch
+		docs[nInserts/2].Set(d.ExpiresAtField, "not-a-time")
+
+		err = db.Insert("myCollection", docs...)
+		require.Error(t, err)
+
+		// the batch must be all-or-nothing: no document may be left behind
+		all, err := db.FindAll(q.NewQuery("myCollection"))
+		require.NoError(t, err)
+		require.Empty(t, all)
+
+		n, err := db.Count(q.NewQuery("myCollection"))
+		require.NoError(t, err)
+		require.Equal(t, 0, n)
+
+		// rerunning the import with a clean batch must not create duplicates
+		cleanDocs := make([]*d.Document, 0, nInserts)
+		for i := 0; i < nInserts; i++ {
+			doc := d.NewDocument()
+			doc.Set("myField", i)
+			cleanDocs = append(cleanDocs, doc)
+		}
+		require.NoError(t, db.Insert("myCollection", cleanDocs...))
+
+		n, err = db.Count(q.NewQuery("myCollection"))
+		require.NoError(t, err)
+		require.Equal(t, nInserts, n)
+	})
+}
+
 func loadFromJson(db *c.DB, filename string, model interface{}) error {
 	var objects []interface{}
 
